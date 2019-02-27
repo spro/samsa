@@ -52,7 +52,7 @@ module.exports = class Samsa
 
     createConsumerGroup: ->
         consumer_group_options = {
-            host: @host
+            kafkaHost: @host
             groupId: @name
         }
         @consumer = addPromiseMethods new Kafka.ConsumerGroup(consumer_group_options, [@name])
