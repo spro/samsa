@@ -59,11 +59,11 @@ module.exports = class Samsa
         @consumer.on 'message', @handleMessage.bind(@)
 
     createConsumer: ->
-        if @name
+        if @name?
             consumer_payloads = [{topic: @name}]
+            consumer_options = {groupId: @name}
         else
             consumer_payloads = []
-        consumer_options = {groupId: @name}
         @consumer = addPromiseMethods new Kafka.Consumer(@kafka, consumer_payloads, consumer_options)
         @consumer.on 'message', @handleMessage.bind(@)
 
