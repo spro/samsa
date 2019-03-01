@@ -1,6 +1,6 @@
 {
     "name": "samsa",
-    "version": "0.0.1",
+    "version": "0.0.3",
     "license": "MIT",
     "author": {
         "name": "Sean Robertson",
@@ -13,6 +13,7 @@
     "main": "lib/index.js",
     "dependencies": {
         "bluebird": "^3.5.3",
+        "debug": "^4.1.1",
         "kafka-node": "^4.0.2"
     }
 }
