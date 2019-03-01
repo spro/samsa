@@ -1,6 +1,7 @@
 Kafka = require 'kafka-node'
 Promise = require 'bluebird'
 uuid = require 'uuid'
+debug = require('debug')('samsa')
 
 {EventEmitter} = require 'events'
 
@@ -19,9 +20,11 @@ process.on 'SIGTERM', -> exit.emit 'exit'
 addPromiseMethods = (obj) ->
     Promise.promisifyAll obj, {suffix: 'Promise'}
 
-module.exports = class Samsa
+module.exports = class Samsa extends EventEmitter
 
     constructor: (@name, @methods={}, @config={}) ->
+        super()
+
         @host = @config.host or '127.0.0.1:9092'
         @kafka = addPromiseMethods new Kafka.KafkaClient({kafkaHost: @host})
         @createProducer()
@@ -36,6 +39,14 @@ module.exports = class Samsa
         @subscriptions = {}
         @exitOnClose()
 
+        @producer.on 'ready', (ready) =>
+            debug('producer ready', ready)
+            @emit 'producer ready'
+        @producer.on 'error', (error) ->
+            debug('producer error', error)
+
+        debug('started')
+
     exitOnClose: ->
         exiters.push => new Promise (resolve, reject) =>
             @consumer.close ->
@@ -46,7 +57,7 @@ module.exports = class Samsa
 
     createProducer: ->
         producer_options = {
-            partitionerType: 1
+            partitionerType: 1 # default = 0, random = 1, cyclic = 2, keyed = 3, custom = 4
         }
         @producer = addPromiseMethods new Kafka.Producer(@kafka, producer_options)
 
@@ -55,27 +66,29 @@ module.exports = class Samsa
             kafkaHost: @host
             groupId: @name
         }
-        @consumer = addPromiseMethods new Kafka.ConsumerGroup(consumer_group_options, [@name])
-        @consumer.on 'message', @handleMessage.bind(@)
+        @on 'producer ready', =>
+            await @createTopics [@name, @name + '-response']
+            @consumer = addPromiseMethods new Kafka.ConsumerGroup(consumer_group_options, [@name]) # Subscribes to topic of own name
+            @consumer.on 'message', @handleMessage.bind(@)
 
     createConsumer: ->
-        if @name?
-            consumer_payloads = [{topic: @name}]
-            consumer_options = {groupId: @name}
-        else
-            consumer_payloads = []
+        consumer_payloads = []
+        consumer_options = {}
         @consumer = addPromiseMethods new Kafka.Consumer(@kafka, consumer_payloads, consumer_options)
         @consumer.on 'message', @handleMessage.bind(@)
 
-    createTopic: (topic) ->
-        @kafka.createTopicsPromise [topic]
+    createTopics: (topics) ->
+        created = await @producer.createTopicsPromise topics, true
+        await @kafka.refreshMetadataPromise(topics)
+        debug 'created topics', created
 
     consumeTopic: (topic) ->
         @consuming_topics.push topic
-        await @createTopic topic
         added = await @consumer.addTopicsPromise [topic]
+        debug 'added topic to consumer', added
 
     handleMessage: (full_message) ->
+        debug('got message', full_message)
         message = JSON.parse full_message.value
 
         if hook = @hooks[message.id]
@@ -106,8 +119,10 @@ module.exports = class Samsa
         }]
 
     request: (service, method, args...) ->
-        if service not in @consuming_topics
-            await @consumeTopic service + '-response'
+        response_topic = service + '-response'
+        if response_topic not in @consuming_topics
+            await @consumeTopic response_topic
+            debug('consuming', response_topic)
         id = uuid()
         hook = new Promise (resolve, reject) =>
             @hooks[id + '-response'] = (message) ->
@@ -118,6 +133,7 @@ module.exports = class Samsa
         sent = await @send service, {
             id, service, method, args
         }
+        debug('sent', sent)
         return hook
 
     subscribe: (service, subscription) ->
